@@ -1,0 +1,42 @@
+# SSH public keys (identify who has access to the box)
+*.pub
+
+# Private keys / certs, just in case any ever land here
+id_*
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Compiled Ignition: inlines ALL secrets from config.bu + configs/*.
+# Regenerate it with ./build.sh — never commit it.
+config.ign
+
+# ============================================================
+#  Large / generated artifacts
+# ============================================================
+# VM disk images (huge; the booted image also contains runtime secrets)
+*.img
+*.img.*
+*.qcow2
+*.raw
+
+# software-TPM state, if -T is ever used
+swtpm/
+*.tpm
+
+# ============================================================
+#  Nested project (has its own git repo / its own .env)
+# ============================================================
+laravel-docker/
+
+# ============================================================
+#  OS / editor junk
+# ============================================================
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/

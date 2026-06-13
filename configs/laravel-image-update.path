@@ -1,0 +1,11 @@
+[Unit]
+Description=Watch the rootless image store and apply updates on upload
+
+[Path]
+# images.json is rewritten whenever `podman image scp` loads a new image.
+# systemd watches the nearest existing ancestor until the file appears.
+PathModified=%h/.local/share/containers/storage/overlay-images/images.json
+Unit=laravel-image-update.service
+
+[Install]
+WantedBy=default.target

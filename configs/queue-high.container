@@ -1,0 +1,36 @@
+[Unit]
+Description=Laravel queue worker (high)
+Requires=laravel-app-network.service laravel-database-network.service storage-volume.service
+After=laravel-app-network.service laravel-database-network.service storage-volume.service postgres.service php.service
+
+[Container]
+ContainerName=queue-high
+Image=localhost/laravel-app:latest
+AutoUpdate=local
+
+EnvironmentFile=/etc/laravel/laravel.env
+EnvironmentFile=/etc/laravel/php.env
+Environment=AUTORUN_ENABLED=false
+
+Volume=storage.volume:/var/www/html/storage
+Network=laravel-app.network
+Network=laravel-database.network
+
+Exec=php artisan queue:work --queue=high --tries=3 --backoff=10 --max-time=3600
+
+HealthCmd=healthcheck-queue
+HealthInterval=30s
+HealthTimeout=5s
+HealthRetries=3
+HealthStartPeriod=30s
+
+PodmanArgs=--memory=256m
+
+[Service]
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=0
+TimeoutStopSec=60
+
+[Install]
+WantedBy=default.target

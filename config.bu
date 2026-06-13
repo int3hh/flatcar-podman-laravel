@@ -1,0 +1,164 @@
+variant: flatcar
+version: 1.1.0
+
+passwd:
+  users:
+    # Deploy / runtime identity. CI logs in as this user to `podman image scp`,
+    # and it runs the rootless quadlets. Deliberately has NO sudo: a compromised
+    # deploy key can push container images, but cannot get host root.
+    - name: symfony5
+      # Fixed UID so the quadlets can be scoped to this user's generator
+      # (/etc/containers/systemd/users/1000) and CI's `podman image scp`
+      # lands images in the store these units read.
+      uid: 1000
+      # Authorized keys are kept in a separate file so redeploys only touch credentials.
+      # Compile with: ./build.sh   (butane --files-dir . --strict config.bu > config.ign)
+      ssh_authorized_keys_local:
+        - configs/symfony5.pub
+
+    # Break-glass admin identity: sudo + a SEPARATE key, for human host admin.
+    # Not used by CI. (Flatcar's sudo group is passwordless; this key is the
+    # only credential, so guard it accordingly.)
+    - name: admin
+      groups:
+        - sudo
+      ssh_authorized_keys_local:
+        - configs/admin.pub
+
+storage:
+  links:
+    # Disable the default Docker + containerd sysext images (we use Podman)
+    - path: /etc/extensions/docker-flatcar.raw
+      target: /dev/null
+      overwrite: true
+    - path: /etc/extensions/containerd-flatcar.raw
+      target: /dev/null
+      overwrite: true
+    # Enable the rootless image-update path watcher in every user manager.
+    # (Only symfony5 lingers, so only it actually runs it at boot.)
+    - path: /etc/systemd/user/default.target.wants/laravel-image-update.path
+      target: /etc/systemd/user/laravel-image-update.path
+      overwrite: true
+
+  files:
+    # Opt into the bundled Podman sysext (Podman is no longer in the base image
+    # as of Flatcar 3941.0.0; on older images this file is a harmless no-op).
+    - path: /etc/flatcar/enabled-sysext.conf
+      mode: 0644
+      contents:
+        inline: |
+          podman
+
+    # Container trust policy. Podman refuses to pull/run any image without this
+    # ("no policy.json file found"); this image doesn't ship one. Permissive
+    # default, matching the upstream containers-common default.
+    - path: /etc/containers/policy.json
+      mode: 0644
+      contents:
+        local: configs/policy.json
+
+    # Let rootless Podman bind low ports (80/443) without root
+    - path: /etc/sysctl.d/99-unprivileged-ports.conf
+      mode: 0644
+      contents:
+        inline: |
+          net.ipv4.ip_unprivileged_port_start=80
+
+    # Disable SSH password authentication (key-based login only)
+    - path: /etc/ssh/sshd_config.d/10-no-password.conf
+      mode: 0644
+      contents:
+        inline: |
+          PasswordAuthentication no
+          ChallengeResponseAuthentication no
+          KbdInteractiveAuthentication no
+          PermitRootLogin no
+
+    # Run symfony5's user services at boot without an active login session,
+    # so the rootless quadlets start on boot (equivalent to loginctl enable-linger).
+    - path: /var/lib/systemd/linger/symfony5
+      mode: 0644
+      contents:
+        inline: ""
+
+    # --- Rootless Podman quadlets for symfony5 (UID 1000) -----------------
+    # systemd's per-user podman generator turns these into user services.
+    - path: /etc/containers/systemd/users/1000/laravel-database.network
+      mode: 0644
+      contents:
+        local: configs/laravel-database.network
+    - path: /etc/containers/systemd/users/1000/laravel-app.network
+      mode: 0644
+      contents:
+        local: configs/laravel-app.network
+    - path: /etc/containers/systemd/users/1000/pgdata.volume
+      mode: 0644
+      contents:
+        local: configs/pgdata.volume
+    - path: /etc/containers/systemd/users/1000/storage.volume
+      mode: 0644
+      contents:
+        local: configs/storage.volume
+    - path: /etc/containers/systemd/users/1000/postgres.container
+      mode: 0644
+      contents:
+        local: configs/postgres.container
+    - path: /etc/containers/systemd/users/1000/php.container
+      mode: 0644
+      contents:
+        local: configs/php.container
+    - path: /etc/containers/systemd/users/1000/nginx.container
+      mode: 0644
+      contents:
+        local: configs/nginx.container
+    - path: /etc/containers/systemd/users/1000/queue-default.container
+      mode: 0644
+      contents:
+        local: configs/queue-default.container
+    - path: /etc/containers/systemd/users/1000/queue-high.container
+      mode: 0644
+      contents:
+        local: configs/queue-high.container
+    - path: /etc/containers/systemd/users/1000/scheduler.container
+      mode: 0644
+      contents:
+        local: configs/scheduler.container
+
+    # --- Auto-update: apply images the moment CI uploads them -------------
+    # Plain user units (not quadlets): a .path watches the rootless image
+    # store and triggers `podman auto-update`, which restarts the units whose
+    # local image (AutoUpdate=local) changed.
+    - path: /etc/systemd/user/laravel-image-update.service
+      mode: 0644
+      contents:
+        local: configs/laravel-image-update.service
+    - path: /etc/systemd/user/laravel-image-update.path
+      mode: 0644
+      contents:
+        local: configs/laravel-image-update.path
+
+    # --- Credentials / app config (readable by symfony5 only) ------------
+    - path: /etc/laravel/postgres.env
+      mode: 0600
+      user:
+        id: 1000
+      group:
+        id: 1000
+      contents:
+        local: configs/postgres.env
+    - path: /etc/laravel/php.env
+      mode: 0600
+      user:
+        id: 1000
+      group:
+        id: 1000
+      contents:
+        local: configs/php.env
+    - path: /etc/laravel/laravel.env
+      mode: 0600
+      user:
+        id: 1000
+      group:
+        id: 1000
+      contents:
+        local: configs/laravel.env

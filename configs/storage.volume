@@ -1,0 +1,6 @@
+[Unit]
+Description=Laravel shared storage volume
+
+[Volume]
+# Shared /var/www/html/storage (php rw, workers rw, nginx ro).
+# quadlet creates it as "systemd-storage".

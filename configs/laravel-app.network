@@ -1,0 +1,5 @@
+[Unit]
+Description=Laravel app network (nginx <-> php)
+
+[Network]
+NetworkName=laravel-app

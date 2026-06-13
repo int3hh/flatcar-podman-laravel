@@ -1,0 +1,6 @@
+[Unit]
+Description=PostgreSQL data volume
+
+[Volume]
+# Named podman volume; quadlet creates it as "systemd-pgdata".
+# Referenced from postgres.container as "pgdata.volume".

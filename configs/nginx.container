@@ -1,0 +1,32 @@
+[Unit]
+Description=Laravel Nginx
+Requires=laravel-app-network.service storage-volume.service
+After=laravel-app-network.service storage-volume.service php.service
+# nginx caches the "php" upstream IP at startup. When php restarts (e.g. after
+# CI pushes a new image and podman-auto-update restarts it) php gets a new IP,
+# so nginx must restart too to re-resolve it -> otherwise 502. PartOf makes a
+# php.service restart/stop propagate to nginx.
+PartOf=php.service
+
+[Container]
+ContainerName=nginx
+Image=localhost/laravel-nginx:latest
+AutoUpdate=local
+
+Volume=storage.volume:/var/www/html/storage:ro
+Network=laravel-app.network
+
+# Rootless binding of 80/443 relies on net.ipv4.ip_unprivileged_port_start=80
+# (set in config.bu).
+PublishPort=80:80
+PublishPort=443:443
+
+PodmanArgs=--memory=128m
+
+[Service]
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=default.target

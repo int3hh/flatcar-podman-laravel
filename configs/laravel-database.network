@@ -1,0 +1,7 @@
+[Unit]
+Description=Laravel database network
+
+[Network]
+# Internal network for the DB and the app/worker containers.
+# quadlet creates it as "systemd-laravel-database".
+NetworkName=laravel-database

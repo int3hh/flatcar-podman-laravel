@@ -1,0 +1,43 @@
+[Unit]
+Description=Laravel PHP-FPM
+# Networks/volume/DB must exist first. Postgres "After" gives ordering; the
+# container itself retries (Restart=always) until the DB actually accepts
+# connections, which reproduces compose's "condition: service_healthy".
+Requires=laravel-app-network.service laravel-database-network.service storage-volume.service
+After=laravel-app-network.service laravel-database-network.service storage-volume.service postgres.service
+
+[Container]
+# Name is fixed: nginx connects via "fastcgi_pass php:9000".
+ContainerName=php
+Image=localhost/laravel-app:latest
+# Restart this unit when a newer local image with the same name appears
+# (i.e. after CI runs `podman image scp`). Driven by podman-auto-update.
+AutoUpdate=local
+
+# App config/secrets, then PHP/runtime tuning. Later files win on conflicts.
+EnvironmentFile=/etc/laravel/laravel.env
+EnvironmentFile=/etc/laravel/php.env
+
+Volume=storage.volume:/var/www/html/storage
+Network=laravel-app.network
+Network=laravel-database.network
+
+# php-fpm listens on 9000 internally; reached over the app network, not published.
+HealthCmd=php-fpm-healthcheck
+HealthInterval=30s
+HealthTimeout=5s
+HealthRetries=3
+HealthStartPeriod=30s
+
+PodmanArgs=--memory=512m
+
+[Service]
+Restart=always
+RestartSec=10
+# Never stop retrying: the image may not be uploaded yet, and the DB may not
+# be ready yet. Disable systemd's start-rate limiter so it keeps trying.
+StartLimitIntervalSec=0
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

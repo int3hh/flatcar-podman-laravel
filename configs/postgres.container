@@ -1,0 +1,46 @@
+[Unit]
+Description=PostgreSQL 18 (Laravel)
+# Wait for the podman network to be created first.
+Requires=laravel-database-network.service
+After=laravel-database-network.service
+
+[Container]
+# Must stay "pgsql": the Laravel app resolves the DB by this name (DB_HOST=pgsql).
+ContainerName=pgsql
+Image=docker.io/library/postgres:18-alpine
+
+# Credentials live in a separate file (kept out of the image and this quadlet).
+EnvironmentFile=/etc/laravel/postgres.env
+Environment=PGDATA=/data/postgres
+
+# Persistent data (named volume, declared in pgdata.volume).
+Volume=pgdata.volume:/data/postgres
+
+# Internal-only network shared with the PHP/worker containers (no host port).
+Network=laravel-database.network
+
+# Matches compose shm_size: 512m (Postgres parallel queries need shared memory).
+ShmSize=512m
+
+# Healthcheck (from compose: pg_isready).
+# Double-$ so systemd passes a literal $ through; the container shell expands it
+# (POSTGRES_USER/DB come from the --env-file, not systemd's environment).
+HealthCmd=pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB
+HealthInterval=10s
+HealthTimeout=10s
+HealthRetries=3
+HealthStartPeriod=60s
+
+# Memory limit (compose deploy.resources.limits.memory: 512M).
+PodmanArgs=--memory=512m
+
+[Service]
+# compose: restart: unless-stopped
+Restart=always
+RestartSec=10
+# Keep retrying through transient pull/start failures (matches the other units).
+StartLimitIntervalSec=0
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target default.target

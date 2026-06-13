@@ -1,0 +1,9 @@
+[Unit]
+Description=Apply newly uploaded container images (podman auto-update --local)
+# Rootless user service for symfony5.
+
+[Service]
+Type=oneshot
+# Restarts any unit whose local image (same name) changed -> picks up images
+# that CI pushed with `podman image scp`. Quadlets opt in via AutoUpdate=local.
+ExecStart=/usr/bin/podman auto-update
