@@ -11,6 +11,12 @@ passwd:
       # (/etc/containers/systemd/users/1000) and CI's `podman image scp`
       # lands images in the store these units read.
       uid: 1000
+      # Lets symfony5 read its OWN logs without sudo. The quadlet containers use
+      # the journald log driver, so both `journalctl --user -u <svc>` and
+      # `podman logs <ctr>` read from the journal; the journal files are
+      # group-readable by systemd-journal, so this membership unblocks both.
+      groups:
+        - systemd-journal
       # Authorized keys are kept in a separate file so redeploys only touch credentials.
       # Compile with: ./build.sh   (butane --files-dir . --strict config.bu > config.ign)
       ssh_authorized_keys_local:
@@ -26,6 +32,46 @@ passwd:
         - configs/admin.pub
 
 storage:
+  # ROOT is a plain (unencrypted) ext4 filesystem. LUKS was removed on purpose:
+  # this host has no TPM and boots unattended, so the unlock key necessarily
+  # lived on the same disk (in the on-disk initramfs). A stolen disk/snapshot
+  # contains everything the machine uses to unlock itself, so the encryption
+  # gave no real at-rest protection while adding boot-time failure modes.
+  # If at-rest protection is ever required, use NETWORK-BOUND unlock (Tang +
+  # Clevis) rather than an on-disk key: a stolen disk can't unlock off your
+  # network, and unattended boot is preserved.
+  #
+  # Grow the ROOT partition to fill the whole disk on first boot. Flatcar's
+  # native resizable-rootfs auto-grow would now also handle this (it's no longer
+  # bypassed by a LUKS wrapper), but we keep the explicit resize for determinism
+  # so ROOT never gets stuck at the install image's tiny default (~1.7 GiB).
+  # PROVIDER-SPECIFIC: `/dev/vda` is correct for virtio/KVM clouds (Vultr,
+  # DigitalOcean, Linode, Hetzner Cloud, OpenStack). On AWS Nitro / some GCP
+  # shapes the disk is /dev/nvme0n1; on others /dev/sda. Change this one line
+  # when moving providers. `resize: true` with no size_mib = fill the disk.
+  disks:
+    - device: /dev/vda
+      # Don't touch the rest of the GPT — only resize partition 9 below.
+      wipe_table: false
+      partitions:
+        - number: 9
+          label: ROOT
+          # start_mib: 0 = keep the existing start; size_mib: 0 = grow to fill
+          # the rest of the disk. Both MUST be set explicitly: with size_mib
+          # omitted, Ignition keeps the current size and the resize is a no-op
+          # ("partition 9 found with correct specifications").
+          start_mib: 0
+          size_mib: 0
+          resize: true
+  filesystems:
+    # Format ROOT directly (no LUKS mapper). wipe_filesystem ensures a clean
+    # ext4 even when reprovisioning a disk whose ROOT previously held a LUKS
+    # signature, so the box reliably finds root=LABEL=ROOT on first boot.
+    - device: /dev/disk/by-partlabel/ROOT
+      format: ext4
+      label: ROOT
+      wipe_filesystem: true
+
   links:
     # Disable the default Docker + containerd sysext images (we use Podman)
     - path: /etc/extensions/docker-flatcar.raw
@@ -38,6 +84,11 @@ storage:
     # (Only symfony5 lingers, so only it actually runs it at boot.)
     - path: /etc/systemd/user/default.target.wants/laravel-image-update.path
       target: /etc/systemd/user/laravel-image-update.path
+      overwrite: true
+    # Enable the host-timezone unit at boot (propagates to every container via
+    # the host /etc/localtime that rootless Podman mounts in by default).
+    - path: /etc/systemd/system/multi-user.target.wants/set-timezone.service
+      target: /etc/systemd/system/set-timezone.service
       overwrite: true
 
   files:
@@ -80,6 +131,15 @@ storage:
       mode: 0644
       contents:
         inline: ""
+
+    # Set the host timezone on first boot. timedatectl is the supported way on
+    # Flatcar (writing /etc/localtime directly can race systemd-timedated).
+    # Rootless Podman mounts the host's /etc/localtime into every container, so
+    # postgres/php/nginx/workers/scheduler all inherit Europe/Helsinki from this.
+    - path: /etc/systemd/system/set-timezone.service
+      mode: 0644
+      contents:
+        local: configs/set-timezone.service
 
     # --- Rootless Podman quadlets for symfony5 (UID 1000) -----------------
     # systemd's per-user podman generator turns these into user services.
@@ -137,6 +197,39 @@ storage:
       contents:
         local: configs/laravel-image-update.path
 
+    # Convenience shell for symfony5: `artisan ...` and `logs ...` helpers so
+    # day-to-day ops don't need the full podman/journalctl incantations. SSH
+    # interactive shells source ~/.bashrc, so these are available on login.
+    # APPEND (not overwrite): the user's home already ships a skeleton .bashrc
+    # that sources /etc/bashrc and the system defaults — keep all of that and
+    # just add our helpers to the end.
+    - path: /home/symfony5/.bashrc
+      append:
+        - inline: |
+
+            # --- Laravel host helpers (provisioned by config.bu) ---
+            # Run artisan inside the php container:  artisan migrate --force
+            # -it gives a TTY so interactive commands (tinker) work too.
+            artisan() { podman exec -it php php artisan "$@"; }
+
+            # Drop into a shell in the app container:  appsh
+            appsh() { podman exec -it php sh; }
+
+            # Tail a quadlet's logs from the journal:  logs nginx   |   logs php -n 500
+            # Takes a unit short name (nginx php postgres queue-default queue-high scheduler).
+            logs() {
+              local unit="${1:?usage: logs <service> [journalctl args...]}"; shift
+              [[ "$unit" == *.service ]] || unit="$unit.service"
+              journalctl --user -u "$unit" -n 200 -f "$@"
+            }
+
+            # All quadlet logs interleaved:  logs-all
+            logs-all() { journalctl --user -f; }
+
+            # Tail straight from the container instead of the journal:  clogs pgsql
+            # (container names: nginx php pgsql queue-default queue-high scheduler)
+            clogs() { podman logs -f "${1:?usage: clogs <container>}"; }
+
     # --- Credentials / app config (readable by symfony5 only) ------------
     - path: /etc/laravel/postgres.env
       mode: 0600
@@ -162,3 +255,12 @@ storage:
         id: 1000
       contents:
         local: configs/laravel.env
+
+systemd:
+  units:
+    # Enable the SSH daemon. Flatcar ships sshd as socket-activated, so we
+    # enable the socket (not sshd.service); it listens on :22 and spawns
+    # sshd per-connection. Key-only login is enforced by the sshd_config.d
+    # drop-in above (PasswordAuthentication no, PermitRootLogin no).
+    - name: sshd.socket
+      enabled: true

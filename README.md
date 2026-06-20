@@ -97,6 +97,15 @@ podman image scp localhost/laravel-app:latest   flatcar::
 podman image scp localhost/laravel-nginx:latest flatcar::
 ```
 
+> **The trailing `::` is required.** The destination is `podman image scp IMAGE
+> HOST::`. Without `::`, podman does *not* treat the argument as a remote — it
+> does a local save+load and then fails (`Error: exit status 125`) trying to
+> re-tag the image to that name. `HOST` is a connection name from `podman system
+> connection add` (e.g. `flatcar::`); a raw `user@host::` also works but relies
+> on your `~/.ssh/config`/agent for auth and assumes rootless `podman` is on the
+> remote's `PATH`. So `podman image scp ... symfony5@HOST` is wrong — use
+> `symfony5@HOST::` or, better, a named connection.
+
 That's all CI does — no remote `systemctl` calls needed.
 
 ## How start + auto-update works (no manual restarts)

@@ -1,0 +1,12 @@
+[Unit]
+Description=Set system timezone to Europe/Helsinki
+# systemd-timedated is D-Bus-activated; this just orders us after it if present.
+After=systemd-timedated.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/timedatectl set-timezone Europe/Helsinki
+
+[Install]
+WantedBy=multi-user.target
